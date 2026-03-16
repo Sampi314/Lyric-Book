@@ -23,9 +23,25 @@ async function fetchSunoMeta(songId) {
     const artistMatch = pageTitle.match(/by\s+(.+?)\s*\|/)
     const artist = artistMatch ? artistMatch[1] : ''
 
-    return { title, artist }
+    // Extract lyrics from Next.js RSC stream data
+    // Suno embeds lyrics in self.__next_f.push([1,"[Verse 1]\n..."]) calls
+    let lyrics = ''
+    const lyricsStart = html.match(/\[(?:Verse|Intro|Chorus|Pre-Chorus|Hook|Interlude|Spoken|Rap)\s*\d*\]/)
+    if (lyricsStart) {
+      const startIdx = lyricsStart.index
+      const endIdx = html.indexOf('"])', startIdx)
+      if (endIdx > startIdx) {
+        lyrics = html.substring(startIdx, endIdx)
+          .replace(/\\\\n/g, '\n')
+          .replace(/\\n/g, '\n')
+          .replace(/\\\\"/g, '"')
+          .replace(/\\"/g, '"')
+      }
+    }
+
+    return { title, artist, lyrics }
   } catch {
-    return { title: '', artist: '' }
+    return { title: '', artist: '', lyrics: '' }
   }
 }
 
@@ -78,13 +94,16 @@ export default function AdminModal({ song, onSave, onDelete, onClose, saving }) 
       audioUrl,
       ...(meta.title && !f.title ? { title: meta.title } : {}),
       ...(meta.artist && !f.artist ? { artist: meta.artist } : {}),
+      ...(meta.lyrics && !f.lyrics ? { lyrics: meta.lyrics } : {}),
     }))
 
     setImporting(false)
     setImportStatus(
-      meta.title
-        ? `Imported "${meta.title}" - paste lyrics below`
-        : 'Audio URL set - paste title and lyrics below'
+      meta.title && meta.lyrics
+        ? `Imported "${meta.title}" with lyrics`
+        : meta.title
+          ? `Imported "${meta.title}" - paste lyrics below`
+          : 'Audio URL set - paste title and lyrics below'
     )
   }
 
