@@ -1,5 +1,34 @@
 import { useState, useEffect } from 'react'
 
+function parseSunoUrl(url) {
+  const match = url.match(/suno\.com\/song\/([a-f0-9-]+)/)
+  return match ? match[1] : null
+}
+
+async function fetchSunoMeta(songId) {
+  // Try fetching through allorigins proxy to bypass CORS
+  const target = `https://suno.com/song/${songId}`
+  try {
+    const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`)
+    if (!res.ok) throw new Error('Fetch failed')
+    const html = await res.text()
+
+    // Extract title from og:title
+    const titleMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]*)"/)
+    const title = titleMatch ? titleMatch[1] : ''
+
+    // Extract artist from <title> pattern: "Song by Artist | Suno"
+    const pageTitleMatch = html.match(/<title>(.+?)<\/title>/)
+    const pageTitle = pageTitleMatch ? pageTitleMatch[1] : ''
+    const artistMatch = pageTitle.match(/by\s+(.+?)\s*\|/)
+    const artist = artistMatch ? artistMatch[1] : ''
+
+    return { title, artist }
+  } catch {
+    return { title: '', artist: '' }
+  }
+}
+
 export default function AdminModal({ song, onSave, onDelete, onClose, saving }) {
   const [form, setForm] = useState({
     title: '',
@@ -8,6 +37,9 @@ export default function AdminModal({ song, onSave, onDelete, onClose, saving }) 
     lyrics: '',
     translation: '',
   })
+  const [sunoUrl, setSunoUrl] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importStatus, setImportStatus] = useState('')
 
   const isEdit = Boolean(song)
 
@@ -27,6 +59,45 @@ export default function AdminModal({ song, onSave, onDelete, onClose, saving }) 
     setForm((f) => ({ ...f, [field]: e.target.value }))
   }
 
+  const handleSunoImport = async (url) => {
+    setSunoUrl(url)
+    const songId = parseSunoUrl(url)
+    if (!songId) return
+
+    setImporting(true)
+    setImportStatus('Extracting song info...')
+
+    // Always set the audio URL from the song ID
+    const audioUrl = `https://cdn1.suno.ai/${songId}.mp3`
+
+    // Try to fetch title and artist
+    const meta = await fetchSunoMeta(songId)
+
+    setForm((f) => ({
+      ...f,
+      audioUrl,
+      ...(meta.title && !f.title ? { title: meta.title } : {}),
+      ...(meta.artist && !f.artist ? { artist: meta.artist } : {}),
+    }))
+
+    setImporting(false)
+    setImportStatus(
+      meta.title
+        ? `Imported "${meta.title}" - paste lyrics below`
+        : 'Audio URL set - paste title and lyrics below'
+    )
+  }
+
+  const handleSunoUrlPaste = (e) => {
+    // Handle both typing and paste events
+    const value = e.target.value || (e.clipboardData && e.clipboardData.getData('text')) || ''
+    if (parseSunoUrl(value)) {
+      handleSunoImport(value)
+    } else {
+      setSunoUrl(value)
+    }
+  }
+
   const handleSubmit = (e) => {
     e.preventDefault()
     onSave({
@@ -43,6 +114,29 @@ export default function AdminModal({ song, onSave, onDelete, onClose, saving }) 
         </h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Suno Import */}
+          {!isEdit && (
+            <div className="bg-accent/10 border border-accent/20 rounded-xl p-3">
+              <label className="block text-xs text-accent font-semibold mb-1">
+                Import from Suno
+              </label>
+              <input
+                value={sunoUrl}
+                onChange={handleSunoUrlPaste}
+                onPaste={handleSunoUrlPaste}
+                placeholder="Paste Suno URL: https://suno.com/song/..."
+                className="w-full bg-bg-primary border border-border-glass rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent"
+                disabled={importing}
+              />
+              {importing && (
+                <p className="text-xs text-accent mt-1 animate-pulse">Extracting...</p>
+              )}
+              {importStatus && !importing && (
+                <p className="text-xs text-text-secondary mt-1">{importStatus}</p>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs text-text-secondary mb-1">Title</label>
