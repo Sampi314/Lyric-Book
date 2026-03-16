@@ -5,41 +5,55 @@ function parseSunoUrl(url) {
   return match ? match[1] : null
 }
 
-async function fetchSunoMeta(songId) {
-  // Try fetching through allorigins proxy to bypass CORS
-  const target = `https://suno.com/song/${songId}`
-  try {
-    const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`)
-    if (!res.ok) throw new Error('Fetch failed')
-    const html = await res.text()
+const CORS_PROXIES = [
+  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+]
 
-    // Extract title from og:title
-    const titleMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]*)"/)
-    const title = titleMatch ? titleMatch[1] : ''
+async function fetchViaProxy(target) {
+  for (const proxy of CORS_PROXIES) {
+    try {
+      const res = await fetch(proxy(target))
+      if (!res.ok) continue
+      const html = await res.text()
+      if (html.includes('__next_f')) return html
+    } catch { /* try next proxy */ }
+  }
+  return null
+}
 
-    // Extract artist from <title> pattern: "Song by Artist | Suno"
-    const pageTitleMatch = html.match(/<title>(.+?)<\/title>/)
-    const pageTitle = pageTitleMatch ? pageTitleMatch[1] : ''
-    const artistMatch = pageTitle.match(/by\s+(.+?)\s*\|/)
-    const artist = artistMatch ? artistMatch[1] : ''
+function extractFromHtml(html) {
+  const titleMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]*)"/)
+  const title = titleMatch ? titleMatch[1] : ''
 
-    // Extract lyrics from Next.js RSC stream data
-    // Suno embeds lyrics in self.__next_f.push([1,"[Verse 1]\n..."]) calls
-    let lyrics = ''
-    const lyricsStart = html.match(/\[(?:Verse|Intro|Chorus|Pre-Chorus|Hook|Interlude|Spoken|Rap)\s*\d*\]/)
-    if (lyricsStart) {
-      const startIdx = lyricsStart.index
-      const endIdx = html.indexOf('"])', startIdx)
-      if (endIdx > startIdx) {
-        lyrics = html.substring(startIdx, endIdx)
-          .replace(/\\\\n/g, '\n')
-          .replace(/\\n/g, '\n')
-          .replace(/\\\\"/g, '"')
-          .replace(/\\"/g, '"')
-      }
+  const pageTitleMatch = html.match(/<title>(.+?)<\/title>/)
+  const pageTitle = pageTitleMatch ? pageTitleMatch[1] : ''
+  const artistMatch = pageTitle.match(/by\s+(.+?)\s*\|/)
+  const artist = artistMatch ? artistMatch[1] : ''
+
+  // Extract lyrics from Next.js RSC stream data
+  let lyrics = ''
+  const lyricsStart = html.match(/\[(?:Verse|Intro|Chorus|Pre-Chorus|Hook|Interlude|Spoken|Rap)\s*\d*\]/)
+  if (lyricsStart) {
+    const startIdx = lyricsStart.index
+    const endIdx = html.indexOf('"])', startIdx)
+    if (endIdx > startIdx) {
+      lyrics = html.substring(startIdx, endIdx)
+        .replace(/\\\\n/g, '\n')
+        .replace(/\\n/g, '\n')
+        .replace(/\\\\"/g, '"')
+        .replace(/\\"/g, '"')
     }
+  }
 
-    return { title, artist, lyrics }
+  return { title, artist, lyrics }
+}
+
+async function fetchSunoMeta(songId) {
+  try {
+    const html = await fetchViaProxy(`https://suno.com/song/${songId}`)
+    if (!html) return { title: '', artist: '', lyrics: '' }
+    return extractFromHtml(html)
   } catch {
     return { title: '', artist: '', lyrics: '' }
   }
